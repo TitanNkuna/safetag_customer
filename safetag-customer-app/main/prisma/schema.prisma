@@ -1,0 +1,469 @@
+// SafeTag Prisma Schema
+// Source of truth: Master Web App Development Specification
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// Auth / Users
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  GUARDIAN
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  phone         String?   @unique
+  phoneVerified DateTime?
+  role          UserRole  @default(CUSTOMER)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  profilesOwned     Profile[]              @relation("ProfileOwner")
+  guardianLinks     GuardianRelationship[] @relation("GuardianUser")
+  auditLogs         AuditLog[]
+  sessions          Session[]
+  accounts          Account[] // NextAuth
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+}
+
+// NextAuth models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────
+// Profiles
+// ─────────────────────────────────────────────
+
+enum ProfileType {
+  ADULT
+  CHILD
+}
+
+enum ProfileStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+  ANONYMISED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  INFORMATION_SUPPLIED
+  ADMIN_REVIEWED
+  IDENTITY_VERIFIED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+model Profile {
+  id                String             @id @default(cuid())
+  safeTagId         String             @unique // e.g. ST-2026-000184
+  publicTagId       String?            @unique // e.g. STAG-8F29KD (current active)
+  profileType       ProfileType
+  status            ProfileStatus      @default(ACTIVE)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+
+  // Personal (private)
+  firstName         String
+  middleNames       String?
+  surname           String
+  preferredName     String?
+  dateOfBirth       DateTime?
+  gender            Gender?
+  idPassportType    String?            // SA ID, Passport, etc.
+  idPassportNumber  String?            // stored encrypted or hashed in production
+  nationality       String?
+
+  // Emergency Mode
+  emergencyMode     Boolean            @default(false)
+  emergencyActivatedAt DateTime?
+  emergencyActivatedBy String?
+
+  // Ownership
+  ownerId           String?
+  owner             User?              @relation("ProfileOwner", fields: [ownerId], references: [id])
+
+  // Order link
+  orderId           String?
+  order             Order?             @relation(fields: [orderId], references: [id])
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  // Relations
+  photos            Photo[]
+  addresses         Address[]
+  emergencyContacts EmergencyContact[]
+  guardianAsChild   GuardianRelationship[] @relation("ChildProfile")
+  guardianAsAdult   GuardianRelationship[] @relation("GuardianProfile")
+  nfcTags           NFCTag[]
+  emergencyEvents   EmergencyEvent[]
+  scanEvents        ScanEvent[]
+  locationShares    LocationShare[]
+
+  @@index([safeTagId])
+  @@index([publicTagId])
+  @@index([surname])
+  @@index([firstName])
+  @@index([status])
+  @@index([emergencyMode])
+  @@index([profileType])
+  @@index([ownerId])
+  @@index([idPassportNumber])
+}
+
+// ─────────────────────────────────────────────
+// Photos
+// ─────────────────────────────────────────────
+
+enum PhotoType {
+  PRIVATE
+  EMERGENCY
+}
+
+model Photo {
+  id          String    @id @default(cuid())
+  profileId   String
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  type        PhotoType @default(PRIVATE)
+  storageKey  String    // object storage key
+  url         String?   // signed or public URL when appropriate
+  mimeType    String
+  sizeBytes   Int?
+  width       Int?
+  height      Int?
+  isPrimary   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([profileId])
+  @@index([type])
+}
+
+// ─────────────────────────────────────────────
+// Address (highly private)
+// ─────────────────────────────────────────────
+
+model Address {
+  id          String   @id @default(cuid())
+  profileId   String
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  street      String?
+  suburb      String?
+  city        String?
+  province    String?
+  postalCode  String?
+  country     String   @default("ZA")
+  isPrimary   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([profileId])
+}
+
+// ─────────────────────────────────────────────
+// Guardians / Relationships
+// ─────────────────────────────────────────────
+
+enum GuardianPermission {
+  VIEW
+  EDIT
+  EMERGENCY
+  FULL
+}
+
+enum VerificationState {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model GuardianRelationship {
+  id              String             @id @default(cuid())
+  childProfileId  String
+  childProfile    Profile            @relation("ChildProfile", fields: [childProfileId], references: [id], onDelete: Cascade)
+
+  // Guardian can be a User account and/or a Profile
+  guardianUserId  String?
+  guardianUser    User?              @relation("GuardianUser", fields: [guardianUserId], references: [id])
+  guardianProfileId String?
+  guardianProfile Profile?           @relation("GuardianProfile", fields: [guardianProfileId], references: [id])
+
+  relationship    String             // Mother, Father, Guardian, etc.
+  phone           String?
+  email           String?
+  permissionLevel GuardianPermission @default(VIEW)
+  verificationStatus VerificationState @default(PENDING)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([childProfileId])
+  @@index([guardianUserId])
+  @@index([guardianProfileId])
+}
+
+// ─────────────────────────────────────────────
+// Emergency Contacts
+// ─────────────────────────────────────────────
+
+model EmergencyContact {
+  id            String   @id @default(cuid())
+  profileId     String
+  profile       Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name          String
+  relationship  String
+  phone         String
+  altPhone      String?
+  email         String?
+  priority      Int      @default(1) // 1 = highest
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([profileId])
+  @@index([priority])
+}
+
+// ─────────────────────────────────────────────
+// NFC Tags
+// ─────────────────────────────────────────────
+
+enum TagStatus {
+  ACTIVE
+  EMERGENCY
+  DEACTIVATED
+  REPLACED
+}
+
+model NFCTag {
+  id            String    @id @default(cuid())
+  internalId    String    @unique // internal system ID
+  publicTagId   String    @unique // STAG-8F29KD – used in URL
+  profileId     String?
+  profile       Profile?  @relation(fields: [profileId], references: [id])
+  status        TagStatus @default(ACTIVE)
+  createdAt     DateTime  @default(now())
+  activatedAt   DateTime?
+  deactivatedAt DateTime?
+  replacedById  String?   // points to new tag if replaced
+  replacedBy    NFCTag?   @relation("TagReplacement", fields: [replacedById], references: [id])
+  previousTags  NFCTag[]  @relation("TagReplacement")
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+
+  scanEvents    ScanEvent[]
+  emergencyEvents EmergencyEvent[]
+  locationShares LocationShare[]
+
+  @@index([publicTagId])
+  @@index([internalId])
+  @@index([profileId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// Orders
+// ─────────────────────────────────────────────
+
+enum OrderStatus {
+  NEW
+  AWAITING_INFORMATION
+  PROFILE_CREATED
+  TAG_ASSIGNED
+  TAG_WRITTEN
+  READY
+  SHIPPED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model Order {
+  id              String        @id @default(cuid())
+  orderNumber     String        @unique // ST-ORD-000184
+  customerName    String?
+  customerEmail   String?
+  customerPhone   String?
+  product         String?       // e.g. Standard NFC Tag
+  status          OrderStatus   @default(NEW)
+  paymentStatus   PaymentStatus @default(PENDING)
+  dateOrdered     DateTime      @default(now())
+  dateCreated     DateTime      @default(now())
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  profiles        Profile[]
+  nfcTags         NFCTag[]
+
+  @@index([orderNumber])
+  @@index([status])
+  @@index([customerEmail])
+}
+
+// ─────────────────────────────────────────────
+// Emergency Events
+// ─────────────────────────────────────────────
+
+enum EmergencyEventStatus {
+  ACTIVE
+  RESOLVED
+  CANCELLED
+}
+
+model EmergencyEvent {
+  id                String               @id @default(cuid())
+  eventNumber       String               @unique // EM-2026-0019
+  profileId         String
+  profile           Profile              @relation(fields: [profileId], references: [id])
+  tagId             String?
+  tag               NFCTag?              @relation(fields: [tagId], references: [id])
+  activatedBy       String?              // user/admin id or description
+  activatedAt       DateTime             @default(now())
+  deactivatedAt     DateTime?
+  status            EmergencyEventStatus @default(ACTIVE)
+  notes             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  locationShares    LocationShare[]
+  scanEvents        ScanEvent[]
+
+  @@index([profileId])
+  @@index([status])
+  @@index([eventNumber])
+  @@index([activatedAt])
+}
+
+// ─────────────────────────────────────────────
+// Scan Events
+// ─────────────────────────────────────────────
+
+model ScanEvent {
+  id                    String    @id @default(cuid())
+  tagId                 String
+  tag                   NFCTag    @relation(fields: [tagId], references: [id])
+  profileId             String?
+  profile               Profile?  @relation(fields: [profileId], references: [id])
+  emergencyEventId      String?
+  emergencyEvent        EmergencyEvent? @relation(fields: [emergencyEventId], references: [id])
+  scannedAt             DateTime  @default(now())
+  wasEmergencyMode      Boolean   @default(false)
+  emergencyPageAccessed Boolean   @default(false)
+  locationRequested     Boolean   @default(false)
+  locationShared        Boolean   @default(false)
+  userAgent             String?
+  // Do NOT store IP by default for privacy; add only if legally required & consented
+
+  @@index([tagId])
+  @@index([profileId])
+  @@index([scannedAt])
+  @@index([wasEmergencyMode])
+}
+
+// ─────────────────────────────────────────────
+// Location Shares (optional, explicit)
+// ─────────────────────────────────────────────
+
+model LocationShare {
+  id               String    @id @default(cuid())
+  profileId        String
+  profile          Profile   @relation(fields: [profileId], references: [id])
+  tagId            String?
+  tag              NFCTag?   @relation(fields: [tagId], references: [id])
+  emergencyEventId String?
+  emergencyEvent   EmergencyEvent? @relation(fields: [emergencyEventId], references: [id])
+  latitude         Float
+  longitude        Float
+  accuracy         Float?
+  sharedAt         DateTime  @default(now())
+  // Retention: should be purged after policy period
+
+  @@index([profileId])
+  @@index([emergencyEventId])
+  @@index([sharedAt])
+}
+
+// ─────────────────────────────────────────────
+// Audit Logs
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  action      String   // PROFILE_CREATED, EMERGENCY_ACTIVATED, etc.
+  targetType  String?  // Profile, NFCTag, Order...
+  targetId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}

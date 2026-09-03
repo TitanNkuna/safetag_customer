@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  /* Dark base */
+  --background: #0b0d10;
+  --surface: #12151a;
+  --surface-2: #1a1f27;
+  --border: #2a313c;
+  --foreground: #f4f6f8;
+  --muted: #9aa3b2;
+  /* Accent (highlights) */
+  --accent: #3dd6c3;
+  --accent-dim: #2a9f91;
+  --accent-soft: rgba(61, 214, 195, 0.12);
+  --danger: #f07178;
+  --danger-soft: rgba(240, 113, 120, 0.15);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Utility helpers for non-Tailwind spots */
+.st-card-accent {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: linear-gradient(
+    160deg,
+    var(--accent-soft) 0%,
+    var(--surface) 55%
+  );
+}
