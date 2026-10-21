@@ -17,7 +17,8 @@ async function isAuthenticated(req: NextRequest): Promise<boolean> {
 }
 
 export async function middleware(req: NextRequest) {
-  if (req.nextUrl.pathname.startsWith("/dashboard")) {
+  const { pathname } = req.nextUrl;
+  if (pathname.startsWith("/dashboard") || pathname.startsWith("/account")) {
     if (!(await isAuthenticated(req))) {
       return NextResponse.redirect(new URL("/login", req.url));
     }
@@ -26,5 +27,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/dashboard/:path*", "/account/:path*"],
 };
